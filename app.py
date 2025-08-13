@@ -1,18 +1,15 @@
-# """Start
-#     Windows: python -m flask run --host=0.0.0.0 --cert=adhoc       мусор
-#     Linux: мусор
-# """
-
 from flask import Flask, request
 import logging, json, requests
 from datetime import datetime
 import pytz
+import hashlib
 
 app = Flask(__name__)
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO) #* Поменять на DEBUG при тестировании
+logger = logging.getLogger(__name__)
 
-username = "your libre link up email"               # ВСТАВЬТЕ СВОИ ДАННЫЕ
+username = "your libre link up email"               #! ВСТАВЬТЕ СВОИ ДАННЫЕ
 password = "your libre link up password"
 port = 5000                                         # ПОРТ
 max_range = 10                                      # Предупреждение
@@ -26,45 +23,54 @@ headers = {
     "accept-encoding": "gzip",
     "cache-control": "no-cache",
     "connection": "Keep-Alive",
-    "content-type": "application/json",
+    "content-type": "application/json"
 }
+
+# Настройка логов
+info_handler = logging.FileHandler("logs.log", encoding="utf-8")
+info_handler.setLevel(logging.INFO)
+logger.addHandler(info_handler)
+
 # Login and acquire JWT token
-response = requests.post(
+libre_response = requests.post(
     f"{url}/llu/auth/login",
     headers=headers,
     json={"email": username, "password": password},
 )
-data = response.json()
-jwt_token = data["data"]["authTicket"]["token"]
+libre_data = libre_response.json()
+jwt_token = libre_data["data"]["authTicket"]["token"]
 headers["Authorization"] = f"Bearer {jwt_token}"
 
-
+#? account id в headers
+account_id = libre_data["data"]["user"]["id"]
+account_id_hash = hashlib.sha256(account_id.encode()).hexdigest()
+headers["account-id"] = account_id_hash
 
 @app.route("/", methods=["POST"])
 def main():
-    logging.info(request.json)
+    logger.debug(request.json)
 
-    response1 = {
+    response = {
         "version": request.json["version"],
         "session": request.json["session"],
         "response": {
-            "end_session": False
+            "end_session": True # Завершить сессию(быстрый выход)
         }
     }
 
     req = request.json
     if req["session"]["new"]:
-        response = requests.get(f"{url}/llu/connections", headers=headers)
-        connections = response.json()
-        print(connections["data"][0]["glucoseMeasurement"])
+        libre_request = requests.get(f"{url}/llu/connections", headers=headers)
+        connections = libre_request.json()
+        logger.debug(connections["data"][0]["glucoseMeasurement"])
 
         curret = connections["data"][0]["glucoseMeasurement"]["Value"]
         arrow = connections["data"][0]["glucoseMeasurement"]["TrendArrow"]
 
         arrow_text = "ошибка"
         status = ""
-
-        if arrow == 3:
+        
+        if arrow == 3: #? Можно сделать match
             arrow_text = "стабильная"
         elif arrow == 4:
             arrow_text = "диагональная вверх"
@@ -75,10 +81,6 @@ def main():
         elif arrow == 1:
             arrow_text = "вниз"
 
-        # if ishigh:                                                   Не работает
-        #     status = "Осторожно, высокий уровень глюкозы, "
-        # elif islow:
-        #     status = "Осторожно, низкий уровень глюкозы, "
         
         if curret >= max_range:
             status = "Осторожно, высокий уровень глюкозы, "
@@ -96,12 +98,12 @@ def main():
         ago = f"{int(minutes_ago)} минут назад" if minutes_ago < 60 else f"{int(minutes_ago // 60)} часов {int(minutes_ago % 60)} минут назад"
 
         rs = f"{status}Текущий уровень глюкозы {curret}, был отсканирован в {at}, это {ago}, стрелка {arrow_text}"
-        response1["response"]["text"] = rs
+        response["response"]["text"] = rs
         
     else:
         pass
 
-    return json.dumps(response1)
+    return json.dumps(response)
 
 if __name__ == '__main__':
     app.run(port=port, ssl_context='adhoc', host="0.0.0.0")
